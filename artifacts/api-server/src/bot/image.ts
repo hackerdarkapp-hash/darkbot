@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { logger } from "../lib/logger.js";
 
-const genAI = new GoogleGenerativeAI(process.env["GEMINI_API_KEY"] ?? "");
+const genAI = new GoogleGenerativeAI(process.env["GOOGLE_API_KEY"] ?? "");
 
 const SAFETY_SETTINGS = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_NONE },
