@@ -31,11 +31,15 @@ startKeepAlive();
 const telegramToken = process.env["TELEGRAM_BOT_TOKEN"];
 if (telegramToken) {
   const bot = createBot();
-  bot.start({
-    onStart: (info) => {
-      logger.info({ username: info.username }, "Telegram bot started");
-    },
-  });
+  bot
+    .start({
+      onStart: (info) => {
+        logger.info({ username: info.username }, "Telegram bot started");
+      },
+    })
+    .catch((err) => {
+      logger.error({ err }, "Telegram bot polling error — server continues");
+    });
   logger.info("NexusAI Telegram Bot is initializing...");
 } else {
   logger.warn("TELEGRAM_BOT_TOKEN not set — bot will not start");
