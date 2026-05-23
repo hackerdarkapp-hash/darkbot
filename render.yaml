@@ -1,20 +1,18 @@
 services:
   - type: web
     name: nexusai-darkbot
-    runtime: node
+    runtime: docker
     region: oregon
     plan: free
-    buildCommand: npm install -g pnpm@10 && pnpm install && pnpm --filter @workspace/api-server run build
-    startCommand: node artifacts/api-server/dist/index.mjs
     healthCheckPath: /api/healthz
     envVars:
       - key: NODE_ENV
         value: production
+      - key: APP_URL
+        value: https://nexusai-darkbot.onrender.com
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: GOOGLE_API_KEY
         sync: false
       - key: ADMIN_TELEGRAM_ID
-        sync: false
-      - key: APP_URL
         sync: false
