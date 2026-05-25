@@ -43,6 +43,13 @@ export interface Persona {
     return true;
   }
 
+  export function updatePersonaPrompt(id: string, newPrompt: string): boolean {
+    const p = personas.get(id);
+    if (!p) return false;
+    p.prompt = newPrompt;
+    return true;
+  }
+
   export function getPersonaCount(): number {
     return personas.size;
   }
