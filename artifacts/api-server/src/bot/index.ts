@@ -7,15 +7,16 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
     clearAllHistory, getStats,
   } from "./history.js";
   import {
-    addPersona, deletePersona, getPersona, getAllPersonas, updatePersonaName,
+    addPersona, deletePersona, getPersona, getAllPersonas, updatePersonaName, updatePersonaPrompt,
   } from "./personas.js";
   import { splitMessage } from "./utils.js";
 
   interface SessionData {
     selectedPersonaId: string;
-    adminFlow: null | "awaiting_persona_name" | "awaiting_persona_prompt" | "awaiting_del_id" | "awaiting_rename_id" | "awaiting_rename_newname";
+    adminFlow: null | "awaiting_persona_name" | "awaiting_persona_prompt" | "awaiting_del_id" | "awaiting_rename_id" | "awaiting_rename_newname" | "awaiting_edit_id" | "awaiting_edit_prompt";
     pendingPersonaName: string | null;
     pendingRenameId: string | null;
+    pendingEditId: string | null;
   }
 
   type BotContext = Context & SessionFlavor<SessionData>;
@@ -69,6 +70,7 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
         adminFlow: null,
         pendingPersonaName: null,
         pendingRenameId: null,
+        pendingEditId: null,
       }),
     }));
 
@@ -195,7 +197,31 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
       await sendPersonaList(ctx);
     });
 
-    bot.callbackQuery("admin:clearall", async (ctx) => {
+    
+      bot.callbackQuery("admin:editpersona", async (ctx) => {
+        const userId = ctx.from?.id; if (!userId) return;
+        if (!isAdmin(userId)) { await ctx.answerCallbackQuery("⛔ للمدير فقط"); return; }
+        await ctx.answerCallbackQuery();
+        await sendPersonaListForEdit(ctx);
+      });
+
+      // Edit persona step 1 — choose which persona: admin:edit:<id>
+      bot.callbackQuery(/^admin:edit:(.+)$/, async (ctx) => {
+        const userId = ctx.from?.id; if (!userId) return;
+        if (!isAdmin(userId)) { await ctx.answerCallbackQuery("⛔ للمدير فقط"); return; }
+        const personaId = ctx.match![1]!;
+        const persona = getPersona(personaId);
+        if (!persona) { await ctx.answerCallbackQuery("❌ غير موجودة"); return; }
+        ctx.session.adminFlow = "awaiting_edit_prompt";
+        ctx.session.pendingEditId = personaId;
+        await ctx.answerCallbackQuery();
+        await ctx.reply(
+          `✏️ *تعديل شخصية: ${persona.name}*\n\n📋 *الوصف الحالي:*\n${persona.prompt}\n\n---\nاكتب *الوصف الجديد* للشخصية:`,
+          { parse_mode: "Markdown" }
+        );
+      });
+
+      bot.callbackQuery("admin:clearall", async (ctx) => {
       const userId = ctx.from?.id; if (!userId) return;
       if (!isAdmin(userId)) { await ctx.answerCallbackQuery("⛔ للمدير فقط"); return; }
       clearAllHistory();
@@ -313,7 +339,24 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
         return;
       }
 
-      // Normal AI response
+
+        // Admin flow: edit persona - awaiting new prompt
+        if (ctx.session.adminFlow === "awaiting_edit_prompt" && isAdmin(userId)) {
+          const editId = ctx.session.pendingEditId;
+          if (!editId) { ctx.session.adminFlow = null; return; }
+          const persona = getPersona(editId);
+          if (!persona) { ctx.session.adminFlow = null; await ctx.reply("❌ الشخصية غير موجودة."); return; }
+          updatePersonaPrompt(editId, text);
+          ctx.session.adminFlow = null;
+          ctx.session.pendingEditId = null;
+          await ctx.reply(
+            `✅ *تم تعديل شخصية: ${persona.name}* بنجاح!\n\n📋 *الوصف الجديد:*\n${text}`,
+            { parse_mode: "Markdown", reply_markup: buildAdminKeyboard() }
+          );
+          return;
+        }
+
+        // Normal AI response
       await handleAIResponse(ctx, userId, text);
     });
 
@@ -356,6 +399,20 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
       `🎭 شخصيتك الحالية: ${persona?.name ?? "افتراضية"}`,
       { parse_mode: "Markdown", reply_markup: isAdmin(userId) ? buildAdminKeyboard() : buildUserKeyboard() }
     );
+  }
+
+  
+  async function sendPersonaListForEdit(ctx: BotContext): Promise<void> {
+    const all = getAllPersonas();
+    if (all.length === 0) {
+      await ctx.reply("📭 لا توجد شخصيات.", { reply_markup: buildAdminKeyboard() });
+      return;
+    }
+    const kb = new InlineKeyboard();
+    for (const p of all) {
+      kb.text(`✏️ ${p.name}`, `admin:edit:${p.id}`).row();
+    }
+    await ctx.reply("✏️ *اختر الشخصية التي تريد تعديل وصفها:*", { parse_mode: "Markdown", reply_markup: kb });
   }
 
   async function sendStats(ctx: BotContext): Promise<void> {
