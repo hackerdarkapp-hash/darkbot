@@ -4,7 +4,7 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
   import { analyzeImage } from "./image.js";
   import {
     getHistory, addMessage, clearHistory,
-    setGlobalPersona, getGlobalPersona, clearGlobalPersona, clearAllHistory,
+    setGlobalPersona, getGlobalPersona, clearGlobalPersona, clearAllHistory, getStats,
   } from "./history.js";
   import { splitMessage } from "./utils.js";
 
@@ -44,6 +44,7 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
       .text("🎭 تغيير الشخصية", "admin:persona")
       .text("🔄 إزالة الشخصية", "admin:resetpersona").row()
       .text("🗑️ مسح محادثات الجميع", "admin:clearall").row()
+      .text("📊 إحصائيات", "action:stats").row()
       .url("👨‍💻 المطور", DEV_URL);
   }
 
@@ -106,6 +107,13 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
       const userId = ctx.from?.id;
       if (!userId) return;
       await sendStatus(ctx, userId);
+    });
+
+    bot.command("stats", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+      if (!isAdmin(userId)) { await ctx.reply("⛔ هذا الأمر متاح للمدير فقط."); return; }
+      await sendStats(ctx, userId);
     });
 
     bot.command("persona", async (ctx) => {
@@ -195,6 +203,13 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
       const userId = ctx.from?.id; if (!userId) return;
       await ctx.answerCallbackQuery();
       await sendStatus(ctx, userId);
+    });
+
+    bot.callbackQuery("action:stats", async (ctx) => {
+      const userId = ctx.from?.id; if (!userId) return;
+      if (!isAdmin(userId)) { await ctx.answerCallbackQuery("⛔ للمدير فقط"); return; }
+      await ctx.answerCallbackQuery();
+      await sendStats(ctx, userId);
     });
 
     bot.callbackQuery("admin:persona", async (ctx) => {
@@ -399,6 +414,22 @@ import { Bot, InlineKeyboard, session, type Context, type SessionFlavor } from "
     clearAllHistory();
     await ctx.reply(
       `🔄 *تمت إزالة الشخصية*\n\nالبوت عاد للوضع الافتراضي لجميع المستخدمين.`,
+      { parse_mode: "Markdown", reply_markup: adminKeyboard() }
+    );
+  }
+
+  async function sendStats(ctx: BotContext, userId: number): Promise<void> {
+    const { totalUsers, totalMessages } = getStats();
+    const uptime = process.uptime();
+    await ctx.reply(
+      `📊 *إحصائيات NexusAI Bot*
+
+` +
+      `👥 المستخدمون النشطون: *${totalUsers}*
+` +
+      `💬 إجمالي الرسائل في الذاكرة: *${totalMessages}*
+` +
+      `⏱️ وقت التشغيل: ${Math.floor(uptime / 3600)}س ${Math.floor((uptime % 3600) / 60)}د ${Math.floor(uptime % 60)}ث`,
       { parse_mode: "Markdown", reply_markup: adminKeyboard() }
     );
   }
