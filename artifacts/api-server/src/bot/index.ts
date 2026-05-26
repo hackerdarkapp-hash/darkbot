@@ -7,13 +7,14 @@ import {
   clearAllHistory, getStats,
 } from "./history.js";
 import {
-  addPersona, deletePersona, getPersona, getAllPersonas, updatePersonaName, updatePersonaPrompt,
+  addPersona, deletePersona, getPersona, getAllPersonas, updatePersonaPrompt,
 } from "./personas.js";
 import { splitMessage } from "./utils.js";
 
 interface SessionData {
   selectedPersonaId: string;
   adminFlow: null | "awaiting_persona_name" | "awaiting_persona_prompt" | "awaiting_del_id" | "awaiting_rename_id" | "awaiting_rename_newname" | "awaiting_edit_id" | "awaiting_edit_prompt";
+  userFlow: null | "awaiting_persona_name" | "awaiting_persona_prompt";
   pendingPersonaName: string | null;
   pendingRenameId: string | null;
   pendingEditId: string | null;
@@ -54,8 +55,9 @@ function buildUserKeyboard(): InlineKeyboard {
     kb.text(all[i]!.name, `persona:${all[i]!.id}`);
     if ((i + 1) % 2 === 0 || i === all.length - 1) kb.row();
   }
-  kb.text("🗑️ مسح المحادثة", "action:clear").text("ℹ️ مساعدة", "action:help").row()
-    .text("⚡ الحالة", "action:status").url("👨‍💻 المطور", DEV_URL);
+  kb.text("➕ إضافة شخصية", "action:addpersona").text("🗑️ مسح المحادثة", "action:clear").row()
+    .text("ℹ️ مساعدة", "action:help").text("⚡ الحالة", "action:status").row()
+    .url("👨‍💻 المطور", DEV_URL);
   return kb;
 }
 
@@ -89,6 +91,7 @@ export function createBot(): Bot<BotContext> {
     initial: (): SessionData => ({
       selectedPersonaId: "default",
       adminFlow: null,
+      userFlow: null,
       pendingPersonaName: null,
       pendingRenameId: null,
       pendingEditId: null,
@@ -114,6 +117,7 @@ export function createBot(): Bot<BotContext> {
     const userId = ctx.from?.id; if (!userId) return;
     clearHistory(userId);
     ctx.session.adminFlow = null;
+    ctx.session.userFlow = null;
     await ctx.reply("✅ تم مسح محادثتك.", { reply_markup: isAdmin(userId) ? buildAdminKeyboard() : buildUserKeyboard() });
   });
 
@@ -162,10 +166,23 @@ export function createBot(): Bot<BotContext> {
     if (!persona) { await ctx.answerCallbackQuery("❌ الشخصية غير موجودة"); return; }
     ctx.session.selectedPersonaId = personaId;
     ctx.session.adminFlow = null;
+    ctx.session.userFlow = null;
     clearHistory(userId);
     await ctx.answerCallbackQuery(`✅ ${persona.name}`);
     const kb = isAdmin(userId) ? buildAdminKeyboard() : buildUserKeyboard();
     await ctx.reply(`🎭 *تم اختيار شخصية: ${persona.name}*\n\nابدأ المحادثة الآن!`, { parse_mode: "Markdown", reply_markup: kb });
+  });
+
+  // ── USER: Add Persona ────────────────────────────────────
+  bot.callbackQuery("action:addpersona", async (ctx) => {
+    const userId = ctx.from?.id; if (!userId) return;
+    await ctx.answerCallbackQuery();
+    ctx.session.userFlow = "awaiting_persona_name";
+    ctx.session.pendingPersonaName = null;
+    await ctx.reply(
+      `➕ *إضافة شخصية جديدة*\n\nاكتب *اسم* الشخصية التي تريد إضافتها:`,
+      { parse_mode: "Markdown" }
+    );
   });
 
   // ── ADMIN CALLBACKS ──────────────────────────────────────
@@ -173,6 +190,7 @@ export function createBot(): Bot<BotContext> {
     const userId = ctx.from?.id; if (!userId) return;
     clearHistory(userId);
     ctx.session.adminFlow = null;
+    ctx.session.userFlow = null;
     await ctx.answerCallbackQuery("✅ تم مسح المحادثة");
     await ctx.reply("✅ تم مسح محادثتك.", { reply_markup: isAdmin(userId) ? buildAdminKeyboard() : buildUserKeyboard() });
   });
@@ -263,7 +281,6 @@ export function createBot(): Bot<BotContext> {
   // ── MESSAGES ─────────────────────────────────────────────
   bot.on("message:photo", async (ctx) => {
     const userId = ctx.from?.id; if (!userId) return;
-
     if (!isAdmin(userId)) {
       const rl = checkRateLimit(userId);
       if (!rl.allowed) {
@@ -271,12 +288,8 @@ export function createBot(): Bot<BotContext> {
         return;
       }
     }
-
     const caption = ctx.message.caption?.trim();
-    if (!caption) {
-      await ctx.reply("🖼️ أرسل الصورة مع سؤال أو تعليق لتحليلها.");
-      return;
-    }
+    if (!caption) { await ctx.reply("🖼️ أرسل الصورة مع سؤال أو تعليق لتحليلها."); return; }
     const thinkingMsg = await ctx.reply("🔍 جاري تحليل الصورة...");
     const chatId = ctx.chat?.id;
     try {
@@ -303,7 +316,6 @@ export function createBot(): Bot<BotContext> {
 
   bot.on("message:document", async (ctx) => {
     const userId = ctx.from?.id; if (!userId) return;
-
     if (!isAdmin(userId)) {
       const rl = checkRateLimit(userId);
       if (!rl.allowed) {
@@ -311,7 +323,6 @@ export function createBot(): Bot<BotContext> {
         return;
       }
     }
-
     const doc = ctx.message.document;
     const fileName = doc.file_name ?? "file";
     const fileSize = doc.file_size ?? 0;
@@ -354,10 +365,36 @@ export function createBot(): Bot<BotContext> {
     const text = ctx.message.text.trim();
     if (!text) return;
 
+    // ── USER FLOW: Add Persona ───────────────────────────
+    if (ctx.session.userFlow === "awaiting_persona_name") {
+      ctx.session.pendingPersonaName = text;
+      ctx.session.userFlow = "awaiting_persona_prompt";
+      await ctx.reply(
+        `✅ الاسم: *${text}*\n\nالآن اكتب *وصف الشخصية* — كيف تريدها أن تتصرف وتتحدث:\n\n_مثال: أنت مساعد برمجة خبير يشرح الكود بأسلوب بسيط_`,
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+
+    if (ctx.session.userFlow === "awaiting_persona_prompt") {
+      const name = ctx.session.pendingPersonaName ?? "شخصية جديدة";
+      const persona = addPersona(name, text);
+      ctx.session.userFlow = null;
+      ctx.session.pendingPersonaName = null;
+      ctx.session.selectedPersonaId = persona.id;
+      clearHistory(userId);
+      await ctx.reply(
+        `✅ *تمت إضافة الشخصية بنجاح!*\n\n🎭 الاسم: *${persona.name}*\n\nتم تفعيلها تلقائياً — ابدأ المحادثة الآن!`,
+        { parse_mode: "Markdown", reply_markup: buildUserKeyboard() }
+      );
+      return;
+    }
+
+    // ── ADMIN FLOW ───────────────────────────────────────
     if (ctx.session.adminFlow === "awaiting_persona_name" && isAdmin(userId)) {
       ctx.session.pendingPersonaName = text;
       ctx.session.adminFlow = "awaiting_persona_prompt";
-      await ctx.reply(`✅ الاسم: *${text}*\n\nالآن اكتب *وصف الشخصية* (prompt) — كيف يجب أن تتصرف وتتحدث:`, { parse_mode: "Markdown" });
+      await ctx.reply(`✅ الاسم: *${text}*\n\nالآن اكتب *وصف الشخصية* (prompt):`, { parse_mode: "Markdown" });
       return;
     }
 
@@ -388,6 +425,7 @@ export function createBot(): Bot<BotContext> {
       return;
     }
 
+    // ── RATE LIMIT ───────────────────────────────────────
     if (!isAdmin(userId)) {
       const rl = checkRateLimit(userId);
       if (!rl.allowed) {
@@ -419,6 +457,7 @@ async function sendHelp(ctx: BotContext, userId: number): Promise<void> {
   await ctx.reply(
     `📖 *دليل الاستخدام*\n\n` +
     `• اختر شخصية من الأزرار\n` +
+    `• ➕ أضف شخصيتك الخاصة بضغطة زر\n` +
     `• ابدأ الكتابة مباشرة\n` +
     `• أرسل صورة مع سؤال للتحليل\n` +
     `• أرسل ملف نصي/كود للتحليل\n` +
@@ -431,12 +470,14 @@ async function sendHelp(ctx: BotContext, userId: number): Promise<void> {
 async function sendStatus(ctx: BotContext, userId: number): Promise<void> {
   const uptime = process.uptime();
   const persona = getPersona(ctx.session.selectedPersonaId);
+  const personaCount = getAllPersonas().length;
   await ctx.reply(
     `⚡ *حالة NexusAI Bot*\n\n` +
     `🟢 يعمل بشكل طبيعي\n` +
     `⏱️ وقت التشغيل: ${Math.floor(uptime / 3600)}س ${Math.floor((uptime % 3600) / 60)}د\n` +
     `🤖 النموذج: Groq llama-3.3-70b\n` +
     `🎭 شخصيتك الحالية: ${persona?.name ?? "افتراضية"}\n` +
+    `🎭 عدد الشخصيات: ${personaCount}\n` +
     `📊 الحد: ${RATE_LIMIT_MAX} طلب/دقيقة`,
     { parse_mode: "Markdown", reply_markup: isAdmin(userId) ? buildAdminKeyboard() : buildUserKeyboard() }
   );
@@ -444,14 +485,9 @@ async function sendStatus(ctx: BotContext, userId: number): Promise<void> {
 
 async function sendPersonaListForEdit(ctx: BotContext): Promise<void> {
   const all = getAllPersonas();
-  if (all.length === 0) {
-    await ctx.reply("📭 لا توجد شخصيات.", { reply_markup: buildAdminKeyboard() });
-    return;
-  }
+  if (all.length === 0) { await ctx.reply("📭 لا توجد شخصيات.", { reply_markup: buildAdminKeyboard() }); return; }
   const kb = new InlineKeyboard();
-  for (const p of all) {
-    kb.text(`✏️ ${p.name}`, `admin:edit:${p.id}`).row();
-  }
+  for (const p of all) { kb.text(`✏️ ${p.name}`, `admin:edit:${p.id}`).row(); }
   await ctx.reply("✏️ *اختر الشخصية التي تريد تعديل وصفها:*", { parse_mode: "Markdown", reply_markup: kb });
 }
 
@@ -472,16 +508,11 @@ async function sendStats(ctx: BotContext): Promise<void> {
 
 async function sendPersonaList(ctx: BotContext, withDeleteButtons = false): Promise<void> {
   const all = getAllPersonas();
-  if (all.length === 0) {
-    await ctx.reply("❌ لا توجد شخصيات.");
-    return;
-  }
+  if (all.length === 0) { await ctx.reply("❌ لا توجد شخصيات."); return; }
   const list = all.map((p, i) => `${i + 1}. *${p.name}*\nالمعرّف: \`${p.id}\``).join("\n\n");
   if (withDeleteButtons) {
     const kb = new InlineKeyboard();
-    for (const p of all) {
-      if (p.id !== "default") kb.text(`🗑️ ${p.name}`, `admin:del:${p.id}`).row();
-    }
+    for (const p of all) { if (p.id !== "default") kb.text(`🗑️ ${p.name}`, `admin:del:${p.id}`).row(); }
     kb.text("❌ إلغاء", "action:status");
     await ctx.reply(`📋 *اختر الشخصية للحذف:*\n\n${list}`, { parse_mode: "Markdown", reply_markup: kb });
   } else {
