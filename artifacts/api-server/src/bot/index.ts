@@ -14,7 +14,6 @@ import { splitMessage } from "./utils.js";
 interface SessionData {
   selectedPersonaId: string;
   adminFlow: null | "awaiting_persona_name" | "awaiting_persona_prompt" | "awaiting_del_id" | "awaiting_rename_id" | "awaiting_rename_newname" | "awaiting_edit_id" | "awaiting_edit_prompt";
-  userFlow: null | "awaiting_persona_name" | "awaiting_persona_prompt";
   pendingPersonaName: string | null;
   pendingRenameId: string | null;
   pendingEditId: string | null;
@@ -55,9 +54,8 @@ function buildUserKeyboard(): InlineKeyboard {
     kb.text(all[i]!.name, `persona:${all[i]!.id}`);
     if ((i + 1) % 2 === 0 || i === all.length - 1) kb.row();
   }
-  kb.text("➕ إضافة شخصية", "action:addpersona").text("🗑️ مسح المحادثة", "action:clear").row()
-    .text("ℹ️ مساعدة", "action:help").text("⚡ الحالة", "action:status").row()
-    .url("👨‍💻 المطور", DEV_URL);
+  kb.text("🗑️ مسح المحادثة", "action:clear").text("ℹ️ مساعدة", "action:help").row()
+    .text("⚡ الحالة", "action:status").url("👨‍💻 المطور", DEV_URL);
   return kb;
 }
 
@@ -91,14 +89,12 @@ export function createBot(): Bot<BotContext> {
     initial: (): SessionData => ({
       selectedPersonaId: "default",
       adminFlow: null,
-      userFlow: null,
       pendingPersonaName: null,
       pendingRenameId: null,
       pendingEditId: null,
     }),
   }));
 
-  // ── /start ──────────────────────────────────────────────
   bot.command("start", async (ctx) => {
     const userId = ctx.from?.id; if (!userId) return;
     const kb = isAdmin(userId) ? buildAdminKeyboard() : buildUserKeyboard();
@@ -117,7 +113,6 @@ export function createBot(): Bot<BotContext> {
     const userId = ctx.from?.id; if (!userId) return;
     clearHistory(userId);
     ctx.session.adminFlow = null;
-    ctx.session.userFlow = null;
     await ctx.reply("✅ تم مسح محادثتك.", { reply_markup: isAdmin(userId) ? buildAdminKeyboard() : buildUserKeyboard() });
   });
 
@@ -137,7 +132,6 @@ export function createBot(): Bot<BotContext> {
     await sendHelp(ctx, userId);
   });
 
-  // ── ADMIN: Add Persona ───────────────────────────────────
   bot.command("addpersona", async (ctx) => {
     const userId = ctx.from?.id; if (!userId) return;
     if (!isAdmin(userId)) { await ctx.reply("⛔ للمدير فقط."); return; }
@@ -158,7 +152,6 @@ export function createBot(): Bot<BotContext> {
     await ctx.reply("✅ تم مسح محادثات جميع المستخدمين.", { reply_markup: buildAdminKeyboard() });
   });
 
-  // ── PERSONA SELECTION ────────────────────────────────────
   bot.callbackQuery(/^persona:(.+)$/, async (ctx) => {
     const userId = ctx.from?.id; if (!userId) return;
     const personaId = ctx.match![1]!;
@@ -166,31 +159,16 @@ export function createBot(): Bot<BotContext> {
     if (!persona) { await ctx.answerCallbackQuery("❌ الشخصية غير موجودة"); return; }
     ctx.session.selectedPersonaId = personaId;
     ctx.session.adminFlow = null;
-    ctx.session.userFlow = null;
     clearHistory(userId);
     await ctx.answerCallbackQuery(`✅ ${persona.name}`);
     const kb = isAdmin(userId) ? buildAdminKeyboard() : buildUserKeyboard();
     await ctx.reply(`🎭 *تم اختيار شخصية: ${persona.name}*\n\nابدأ المحادثة الآن!`, { parse_mode: "Markdown", reply_markup: kb });
   });
 
-  // ── USER: Add Persona ────────────────────────────────────
-  bot.callbackQuery("action:addpersona", async (ctx) => {
-    const userId = ctx.from?.id; if (!userId) return;
-    await ctx.answerCallbackQuery();
-    ctx.session.userFlow = "awaiting_persona_name";
-    ctx.session.pendingPersonaName = null;
-    await ctx.reply(
-      `➕ *إضافة شخصية جديدة*\n\nاكتب *اسم* الشخصية التي تريد إضافتها:`,
-      { parse_mode: "Markdown" }
-    );
-  });
-
-  // ── ADMIN CALLBACKS ──────────────────────────────────────
   bot.callbackQuery("action:clear", async (ctx) => {
     const userId = ctx.from?.id; if (!userId) return;
     clearHistory(userId);
     ctx.session.adminFlow = null;
-    ctx.session.userFlow = null;
     await ctx.answerCallbackQuery("✅ تم مسح المحادثة");
     await ctx.reply("✅ تم مسح محادثتك.", { reply_markup: isAdmin(userId) ? buildAdminKeyboard() : buildUserKeyboard() });
   });
@@ -365,31 +343,6 @@ export function createBot(): Bot<BotContext> {
     const text = ctx.message.text.trim();
     if (!text) return;
 
-    // ── USER FLOW: Add Persona ───────────────────────────
-    if (ctx.session.userFlow === "awaiting_persona_name") {
-      ctx.session.pendingPersonaName = text;
-      ctx.session.userFlow = "awaiting_persona_prompt";
-      await ctx.reply(
-        `✅ الاسم: *${text}*\n\nالآن اكتب *وصف الشخصية* — كيف تريدها أن تتصرف وتتحدث:\n\n_مثال: أنت مساعد برمجة خبير يشرح الكود بأسلوب بسيط_`,
-        { parse_mode: "Markdown" }
-      );
-      return;
-    }
-
-    if (ctx.session.userFlow === "awaiting_persona_prompt") {
-      const name = ctx.session.pendingPersonaName ?? "شخصية جديدة";
-      const persona = addPersona(name, text);
-      ctx.session.userFlow = null;
-      ctx.session.pendingPersonaName = null;
-      ctx.session.selectedPersonaId = persona.id;
-      clearHistory(userId);
-      await ctx.reply(
-        `✅ *تمت إضافة الشخصية بنجاح!*\n\n🎭 الاسم: *${persona.name}*\n\nتم تفعيلها تلقائياً — ابدأ المحادثة الآن!`,
-        { parse_mode: "Markdown", reply_markup: buildUserKeyboard() }
-      );
-      return;
-    }
-
     // ── ADMIN FLOW ───────────────────────────────────────
     if (ctx.session.adminFlow === "awaiting_persona_name" && isAdmin(userId)) {
       ctx.session.pendingPersonaName = text;
@@ -457,7 +410,6 @@ async function sendHelp(ctx: BotContext, userId: number): Promise<void> {
   await ctx.reply(
     `📖 *دليل الاستخدام*\n\n` +
     `• اختر شخصية من الأزرار\n` +
-    `• ➕ أضف شخصيتك الخاصة بضغطة زر\n` +
     `• ابدأ الكتابة مباشرة\n` +
     `• أرسل صورة مع سؤال للتحليل\n` +
     `• أرسل ملف نصي/كود للتحليل\n` +
