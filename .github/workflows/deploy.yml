@@ -28,10 +28,13 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Trigger Render Deploy
-        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+        continue-on-error: true
         run: |
-          curl -s -X POST "$RENDER_DEPLOY_HOOK_URL" \
-            -o /dev/null \
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL not set, skipping deploy trigger."
+            exit 0
+          fi
+          curl -sf -X POST "$RENDER_DEPLOY_HOOK_URL" \
             -w "HTTP Status: %{http_code}\n"
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
